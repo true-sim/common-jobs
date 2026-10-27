@@ -4,7 +4,9 @@ import com.truesim.annotations.AllowAllocation;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
@@ -22,10 +24,15 @@ import java.util.function.Consumer;
  * tasks are handed back to the main thread at a point of its choosing.
  *
  * <pre>{@code
+ * // Lane definitions can live anywhere, e.g. static final fields: see LaneSpec.
+ * static final LaneSpec DOWNLOADS = LaneSpec.virtual("downloads", 1); // one download at a time
+ * static final LaneSpec FILES = LaneSpec.serial("files");              // one file access at a time, in order
+ * static final LaneSpec DECODE = LaneSpec.platform("decode", 4);
+ *
  * try (TaskScheduler tasks = new TaskScheduler()) {
- *     Lane downloads = tasks.virtualLane("downloads", 1);  // one download at a time
- *     Lane files = tasks.serialLane("files");               // one file access at a time, in order
- *     Lane decode = tasks.platformLane("decode", 4);
+ *     Lane downloads = tasks.lane(DOWNLOADS);
+ *     Lane files = tasks.lane(FILES);
+ *     Lane decode = tasks.lane(DECODE);
  *
  *     Task<byte[]> bytes = downloads.submit(() -> fetch(url));
  *     files.task(() -> write(slot)).serialKey(new SaveSlot(1)).submit(); // typed key: one write per slot at a time
@@ -48,11 +55,26 @@ public final class TaskScheduler implements AutoCloseable {
 
     private final AtomicLong sequence = new AtomicLong();
     private final List<Lane> lanes = new ArrayList<>();
+    private final Map<LaneSpec, Lane> bySpec = new IdentityHashMap<>();
     private final Set<Task<?>> live = ConcurrentHashMap.newKeySet();
     private final ConcurrentLinkedQueue<Task<?>> completed = new ConcurrentLinkedQueue<>();
     private final ScheduledExecutorService timer = Executors.newSingleThreadScheduledExecutor(
         Thread.ofPlatform().daemon().name("truesim-tasks-timer").factory());
     private volatile boolean closed;
+
+    /**
+     * This scheduler's lane for {@code spec}: created on first use, the same lane on every later call. Lanes made
+     * from one spec by different schedulers are separate, each with its own threads.
+     */
+    public synchronized Lane lane(LaneSpec spec) {
+        Lane lane = bySpec.get(spec);
+        if (lane == null) {
+            lane = spec.isVirtual() ? virtualLane(spec.name(), spec.maxConcurrent())
+                : platformLane(spec.name(), spec.maxConcurrent());
+            bySpec.put(spec, lane);
+        }
+        return lane;
+    }
 
     /** A lane on virtual threads, for I/O: at most {@code maxConcurrent} of its tasks run at once. */
     public Lane virtualLane(String name, int maxConcurrent) {
