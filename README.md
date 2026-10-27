@@ -14,7 +14,7 @@ Two layers:
 
 ```kotlin
 dependencies {
-    implementation("com.truesim.common:common-jobs:0.1.0")
+    implementation("com.truesim.common:common-jobs:0.2.0")
 }
 ```
 
@@ -75,7 +75,7 @@ try (TaskScheduler tasks = new TaskScheduler()) {
         .timeout(Duration.ofSeconds(5))                  // cancelled if it runs longer
         .deliver(done -> textures.add(done.result()))    // handed to the main thread
         .submit();
-    files.task(() -> save(slot)).serialKey("slot-1").submit(); // one at a time per key
+    files.task(() -> save(slot)).serialKey(new SaveSlot(1)).submit(); // one at a time per slot
 
     // Once per frame, on the main thread:
     tasks.drainCompleted(); // runs deliver handlers here, in submission order
@@ -87,6 +87,8 @@ try (TaskScheduler tasks = new TaskScheduler()) {
 - **Dependencies:** a task waits for the tasks in `after` and fails if one of them fails or is
   cancelled. A **serial key** only orders: the next task with the key runs after the previous one,
   whatever its outcome (a failed write does not block the next).
+  Use typed keys (`record SaveSlot(int index)`, an enum, a `Path`) rather than strings: typos become
+  compile errors and keys of different kinds never collide.
 - **Cancelling:** `cancel()` drops a task that has not started and interrupts a running one;
   `timeout` cancels it after running too long. `close()` cancels everything unfinished.
 - **Hand-over:** `deliver` handlers run only in `drainCompleted()`, on its thread, in submission

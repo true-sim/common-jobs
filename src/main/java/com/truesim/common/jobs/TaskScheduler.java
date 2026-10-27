@@ -28,6 +28,7 @@ import java.util.function.Consumer;
  *     Lane decode = tasks.platformLane("decode", 4);
  *
  *     Task<byte[]> bytes = downloads.submit(() -> fetch(url));
+ *     files.task(() -> write(slot)).serialKey(new SaveSlot(1)).submit(); // typed key: one write per slot at a time
  *     decode.task(() -> decodePng(bytes.result()))
  *         .after(bytes)
  *         .deliver(done -> textures.add(done.result()))

@@ -71,6 +71,13 @@ class TaskSchedulerTest {
         }
     }
 
+    /** Typed serial keys: equal when their values are, never equal to keys of another kind. */
+    private record SaveSlot(int index) {
+    }
+
+    private record Level(int index) {
+    }
+
     private final TaskScheduler tasks = new TaskScheduler();
     private final ManualExecutor executor = new ManualExecutor();
 
@@ -106,20 +113,21 @@ class TaskSchedulerTest {
         Task<Void> first = lane.<Void>task(() -> {
             writes.add("save-1");
             throw new IOException("disk full");
-        }).serialKey("save").submit();
-        Task<Boolean> second = lane.task(() -> writes.add("save-2")).serialKey("save").submit();
-        Task<Boolean> other = lane.task(() -> writes.add("config")).serialKey("config").submit();
+        }).serialKey(new SaveSlot(1)).submit();
+        Task<Boolean> second = lane.task(() -> writes.add("save-2")).serialKey(new SaveSlot(1)).submit();
+        // Same number, different kind of key: no relation.
+        Task<Boolean> other = lane.task(() -> writes.add("level")).serialKey(new Level(1)).submit();
         // The second save waits for the first; other keys do not.
         assertThat(second.state()).isEqualTo(TaskState.WAITING);
         assertThat(executor.handed).hasSize(2);
         executor.runAll();
-        assertThat(writes).containsExactly("save-1", "config", "save-2");
+        assertThat(writes).containsExactly("save-1", "level", "save-2");
         assertThat(first.state()).isEqualTo(TaskState.FAILED);
         assertThat(first.failure()).isInstanceOf(IOException.class);
         assertThat(second.join()).isTrue(); // the failed earlier write does not fail the next one
         assertThat(other.state()).isEqualTo(TaskState.SUCCEEDED);
         // A key whose last task has ended starts fresh.
-        Task<Boolean> third = lane.task(() -> writes.add("save-3")).serialKey("save").submit();
+        Task<Boolean> third = lane.task(() -> writes.add("save-3")).serialKey(new SaveSlot(1)).submit();
         assertThat(third.state()).isEqualTo(TaskState.QUEUED);
         executor.runAll();
         assertThat(writes).endsWith("save-3");
