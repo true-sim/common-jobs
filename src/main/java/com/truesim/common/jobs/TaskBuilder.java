@@ -44,6 +44,10 @@ public final class TaskBuilder<T> {
     /**
      * Runs after the previous task submitted to this lane with an equal key has ended, whatever its outcome: tasks
      * with one key run one at a time in submission order, e.g. writes to one file.
+     *
+     * <p>Keys are compared with {@code equals}. Prefer typed keys over strings, so a typo is a compile error and keys
+     * of different kinds cannot collide: a record such as {@code record SaveSlot(int index)}, an enum constant, or a
+     * {@link java.nio.file.Path}. Keys must not change while in use.
      */
     public TaskBuilder<T> serialKey(Object key) {
         this.serialKey = Objects.requireNonNull(key, "key");
