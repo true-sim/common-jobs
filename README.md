@@ -63,10 +63,15 @@ for (double p : partial) {
 ## Tasks: I/O and background work
 
 ```java
+// Lane definitions: global, without threads, e.g. in a Lanes class.
+static final LaneSpec DOWNLOADS = LaneSpec.virtual("downloads", 1); // virtual threads, one download at a time
+static final LaneSpec FILES = LaneSpec.serial("files");              // one at a time, in order
+static final LaneSpec DECODE = LaneSpec.platform("decode", 4);       // 4 platform threads
+
 try (TaskScheduler tasks = new TaskScheduler()) {
-    Lane downloads = tasks.virtualLane("downloads", 1); // virtual threads, one download at a time
-    Lane files = tasks.serialLane("files");              // one at a time, in order
-    Lane decode = tasks.platformLane("decode", 4);       // 4 platform threads
+    Lane downloads = tasks.lane(DOWNLOADS); // created on first use, the same lane afterwards
+    Lane files = tasks.lane(FILES);
+    Lane decode = tasks.lane(DECODE);
 
     Task<byte[]> bytes = downloads.submit(() -> fetch(url));
     Task<Image> image = decode.task(() -> decodePng(bytes.result()))
@@ -84,6 +89,10 @@ try (TaskScheduler tasks = new TaskScheduler()) {
 
 - **Lanes** run at most `maxConcurrent` tasks at once; ready tasks start by priority, then
   submission order.
+- **Lane specs** are the definitions: keep them in `static final` fields and use them anywhere.
+  Each scheduler builds its own lane from a spec on first use, so threads and tasks stay with the
+  scheduler that owns them (tests, editor and game each get their own). Specs are compared by
+  identity; the name only labels threads. `virtualLane(...)` and friends make one-off lanes.
 - **Dependencies:** a task waits for the tasks in `after` and fails if one of them fails or is
   cancelled. A **serial key** only orders: the next task with the key runs after the previous one,
   whatever its outcome (a failed write does not block the next).
