@@ -1,6 +1,7 @@
 pluginManagement {
-    // Develop against a local build-logic checkout: -Ptruesim.build-logic=../build-logic
-    providers.gradleProperty("truesim.build-logic").orNull?.let { includeBuild(it) }
+    // Use ../build-logic when present; override with -Ptruesim.build-logic=<path> (or false).
+    providers.gradleProperty("truesim.build-logic").orElse("../build-logic").get()
+        .takeIf { file(it).isDirectory }?.let { includeBuild(it) }
     repositories {
         gradlePluginPortal()
         maven("https://maven.pkg.github.com/true-sim/build-logic") {
@@ -18,7 +19,8 @@ plugins {
 
 rootProject.name = "common-jobs"
 
-providers.gradleProperty("truesim.build-logic").orNull?.let { includeBuild(it) }
+providers.gradleProperty("truesim.build-logic").orElse("../build-logic").get()
+    .takeIf { file(it).isDirectory }?.let { includeBuild(it) }
 
 dependencyResolutionManagement {
     repositories {
