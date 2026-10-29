@@ -13,7 +13,9 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
@@ -61,8 +63,7 @@ public final class TaskScheduler implements AutoCloseable {
     /** The tasks a drain hands over, sorted; kept for the next drain, so a frame boundary allocates nothing. */
     private final List<Task<?>> draining = new ArrayList<>();
     private static final Comparator<Task<?>> SUBMISSION_ORDER = Comparator.comparingLong(task -> task.sequence);
-    private final ScheduledExecutorService timer = Executors.newSingleThreadScheduledExecutor(
-        Thread.ofPlatform().daemon().name("truesim-tasks-timer").factory());
+    private final ScheduledThreadPoolExecutor timer = timer();
     private volatile boolean closed;
 
     /**
@@ -134,8 +135,24 @@ public final class TaskScheduler implements AutoCloseable {
         }
     }
 
-    void cancelAfter(Task<?> task, Duration timeout) {
-        timer.schedule(task::cancel, timeout.toNanos(), TimeUnit.NANOSECONDS);
+    /** The timeouts' thread; a timeout cancelled as its task ends leaves the queue at once, and the task with it. */
+    private static ScheduledThreadPoolExecutor timer() {
+        ScheduledThreadPoolExecutor timer = new ScheduledThreadPoolExecutor(1,
+            Thread.ofPlatform().daemon().name("truesim-tasks-timer").factory());
+        timer.setRemoveOnCancelPolicy(true);
+        return timer;
+    }
+
+    /**
+     * Cancels {@code task} after {@code timeout}, unless the returned timeout is cancelled first; null once the
+     * scheduler closed, which cancelled the task already.
+     */
+    ScheduledFuture<?> cancelAfter(Task<?> task, Duration timeout) {
+        try {
+            return timer.schedule(task::cancel, timeout.toNanos(), TimeUnit.NANOSECONDS);
+        } catch (RejectedExecutionException closed) {
+            return null;
+        }
     }
 
     void ended(Task<?> task, boolean deliver) {
@@ -147,7 +164,8 @@ public final class TaskScheduler implements AutoCloseable {
 
     /**
      * Runs the hand-over handlers of tasks that finished since the last call, on this thread, in submission order.
-     * Returns how many ran.
+     * Returns how many ran. A handler that throws does not stop the others: every one runs, then the first exception
+     * is rethrown, with those of later handlers suppressed in it.
      */
     public int drainCompleted() {
         for (Task<?> task = completed.poll(); task != null; task = completed.poll()) {
@@ -158,12 +176,24 @@ public final class TaskScheduler implements AutoCloseable {
             return 0;
         }
         draining.sort(SUBMISSION_ORDER);
+        RuntimeException failure = null;
         try {
             for (int i = 0; i < count; i++) {
-                draining.get(i).deliver();
+                try {
+                    draining.get(i).deliver();
+                } catch (RuntimeException e) {
+                    if (failure == null) {
+                        failure = e;
+                    } else {
+                        failure.addSuppressed(e);
+                    }
+                }
             }
         } finally {
             draining.clear();
+        }
+        if (failure != null) {
+            throw failure;
         }
         return count;
     }
