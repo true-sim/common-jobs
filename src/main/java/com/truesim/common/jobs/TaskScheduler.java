@@ -58,6 +58,9 @@ public final class TaskScheduler implements AutoCloseable {
     private final Map<LaneSpec, Lane> bySpec = new IdentityHashMap<>();
     private final Set<Task<?>> live = ConcurrentHashMap.newKeySet();
     private final ConcurrentLinkedQueue<Task<?>> completed = new ConcurrentLinkedQueue<>();
+    /** The tasks a drain hands over, sorted; kept for the next drain, so a frame boundary allocates nothing. */
+    private final List<Task<?>> draining = new ArrayList<>();
+    private static final Comparator<Task<?>> SUBMISSION_ORDER = Comparator.comparingLong(task -> task.sequence);
     private final ScheduledExecutorService timer = Executors.newSingleThreadScheduledExecutor(
         Thread.ofPlatform().daemon().name("truesim-tasks-timer").factory());
     private volatile boolean closed;
@@ -147,15 +150,22 @@ public final class TaskScheduler implements AutoCloseable {
      * Returns how many ran.
      */
     public int drainCompleted() {
-        List<Task<?>> done = new ArrayList<>();
         for (Task<?> task = completed.poll(); task != null; task = completed.poll()) {
-            done.add(task);
+            draining.add(task);
         }
-        done.sort(Comparator.comparingLong(task -> task.sequence));
-        for (Task<?> task : done) {
-            task.deliver();
+        int count = draining.size();
+        if (count == 0) {
+            return 0;
         }
-        return done.size();
+        draining.sort(SUBMISSION_ORDER);
+        try {
+            for (int i = 0; i < count; i++) {
+                draining.get(i).deliver();
+            }
+        } finally {
+            draining.clear();
+        }
+        return count;
     }
 
     /** Number of submitted tasks that have not finished. */
