@@ -319,6 +319,8 @@ class TaskSchedulerTest {
         assertThat(tasks.drainCompleted()).isEqualTo(3);
         assertThat(delivered).containsExactly("a", "FAILED", "c");
         assertThat(tasks.drainCompleted()).isZero();
+        // A frame boundary with nothing to hand over allocates nothing.
+        com.truesim.testing.AllocationAssertions.assertAllocationFree(tasks::drainCompleted);
         assertThat(a.isDone()).isTrue();
         assertThat(b.lane()).isSameAs(lane);
     }
