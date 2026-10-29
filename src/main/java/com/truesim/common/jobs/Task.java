@@ -175,9 +175,8 @@ public final class Task<T> {
             state = TaskState.RUNNING;
             runner = Thread.currentThread();
         }
-        if (timeout != null) {
-            lane.scheduler.cancelAfter(this, timeout);
-        }
+        java.util.concurrent.ScheduledFuture<?> timer = timeout == null ? null
+            : lane.scheduler.cancelAfter(this, timeout);
         T value = null;
         Throwable thrown = null;
         if (!skip) {
@@ -193,6 +192,9 @@ public final class Task<T> {
             Thread.interrupted(); // a cancel may have interrupted this pooled thread
             ended = cancelRequested ? end(TaskState.CANCELLED, null, cancellation())
                 : end(thrown == null ? TaskState.SUCCEEDED : TaskState.FAILED, value, thrown);
+        }
+        if (timer != null) {
+            timer.cancel(false); // the timeout no longer holds the task (and its result) until it would fire
         }
         lane.finished();
         announce(ended);

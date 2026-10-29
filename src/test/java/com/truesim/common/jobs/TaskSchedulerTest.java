@@ -325,6 +325,26 @@ class TaskSchedulerTest {
         assertThat(b.lane()).isSameAs(lane);
     }
 
+    @Test
+    void aThrowingHandlerDoesNotStopTheOthers() {
+        Lane lane = tasks.lane("manual", 4, executor);
+        List<String> delivered = new ArrayList<>();
+        lane.task(() -> "a").deliver(task -> {
+            throw new IllegalStateException("first");
+        }).submit();
+        lane.task(() -> "b").deliver(task -> delivered.add(task.result())).submit();
+        lane.task(() -> "c").deliver(task -> {
+            throw new IllegalArgumentException("second");
+        }).submit();
+        lane.task(() -> "d").deliver(task -> delivered.add(task.result())).submit();
+        executor.runAll();
+        assertThatIllegalStateException().isThrownBy(tasks::drainCompleted).withMessage("first")
+            .satisfies(e -> assertThat(e.getSuppressed()).singleElement()
+                .isInstanceOf(IllegalArgumentException.class));
+        assertThat(delivered).containsExactly("b", "d");
+        assertThat(tasks.drainCompleted()).isZero(); // nothing left over
+    }
+
     // ---------------------------------------------------------------- states and closing
 
     @Test
@@ -357,7 +377,8 @@ class TaskSchedulerTest {
     @Test
     void closingCancelsUnfinishedTasks() {
         Lane lane = tasks.lane("manual", 1, executor);
-        Task<Integer> handedOver = lane.submit(() -> 1);
+        // Handed over with a timeout: it runs after the timer stopped, and ends cancelled all the same.
+        Task<Integer> handedOver = lane.task(() -> 1).timeout(Duration.ofSeconds(10)).submit();
         Task<Integer> queued = lane.submit(() -> 2);
         Task<Integer> waiting = lane.submit(() -> 3, queued);
         tasks.close();
