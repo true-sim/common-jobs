@@ -8,7 +8,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 
 /**
- * What submitting a task costs, and how many tasks a lane gets through, while other threads submit and finish tasks.
+ * What submitting a task costs, and how many tasks a lane gets through, while other threads submit and finish tasks,
+ * with each {@link LaneQueue}.
  * Prints medians over measured rounds after warm-up rounds. Run with
  * {@code TRUESIM_BENCHMARK=true ./gradlew test --tests '*LaneBenchmark'}.
  */
@@ -22,20 +23,22 @@ class LaneBenchmark {
     /** As in scene's streaming: 4,096 submissions on a virtual lane of 16, with the lane full or tasks finishing. */
     @Test
     void submissions() throws InterruptedException {
-        double[][] full = new double[2][ROUNDS];
-        double[][] finishing = new double[2][ROUNDS];
-        for (int round = -WARMUP; round < ROUNDS; round++) {
-            submit(round, true, full);
-            submit(round, false, finishing);
+        for (LaneQueue queue : LaneQueue.values()) {
+            double[][] full = new double[2][ROUNDS];
+            double[][] finishing = new double[2][ROUNDS];
+            for (int round = -WARMUP; round < ROUNDS; round++) {
+                submit(queue, round, true, full);
+                submit(queue, round, false, finishing);
+            }
+            print(queue + ", virtual lane of 16, lane full (tasks wait)", full);
+            print(queue + ", virtual lane of 16, tasks finishing      ", finishing);
         }
-        print("virtual lane of 16, lane full (tasks wait)", full);
-        print("virtual lane of 16, tasks finishing      ", finishing);
     }
 
-    private void submit(int round, boolean blocked, double[][] samples) throws InterruptedException {
+    private void submit(LaneQueue queue, int round, boolean blocked, double[][] samples) throws InterruptedException {
         CountDownLatch gate = new CountDownLatch(blocked ? 1 : 0);
         try (TaskScheduler tasks = new TaskScheduler()) {
-            Lane lane = tasks.virtualLane("bench", 16);
+            Lane lane = tasks.lane(LaneSpec.virtual("bench", 16).withQueue(queue));
             AtomicInteger done = new AtomicInteger();
             Runnable work = () -> {
                 try {
@@ -66,22 +69,25 @@ class LaneBenchmark {
     @Test
     void backlog() throws InterruptedException {
         int[] slots = {1, 4, 16};
-        double[][][] samples = new double[slots.length][2][ROUNDS];
-        for (int round = -WARMUP; round < ROUNDS; round++) {
-            for (int s = 0; s < slots.length; s++) {
-                drain(round, slots[s], samples[s]);
+        for (LaneQueue queue : LaneQueue.values()) {
+            double[][][] samples = new double[slots.length][2][ROUNDS];
+            for (int round = -WARMUP; round < ROUNDS; round++) {
+                for (int s = 0; s < slots.length; s++) {
+                    drain(queue, round, slots[s], samples[s]);
+                }
             }
-        }
-        for (int s = 0; s < slots.length; s++) {
-            print(String.format(Locale.ROOT, "backlog of %d, platform lane of %2d", 4 * TASKS, slots[s]), samples[s]);
+            for (int s = 0; s < slots.length; s++) {
+                print(String.format(Locale.ROOT, "%s, backlog of %d, platform lane of %2d", queue, 4 * TASKS, slots[s]),
+                    samples[s]);
+            }
         }
     }
 
-    private void drain(int round, int slots, double[][] samples) throws InterruptedException {
+    private void drain(LaneQueue queue, int round, int slots, double[][] samples) throws InterruptedException {
         int total = 4 * TASKS;
         CountDownLatch gate = new CountDownLatch(1);
         try (TaskScheduler tasks = new TaskScheduler()) {
-            Lane lane = tasks.platformLane("bench", slots);
+            Lane lane = tasks.lane(LaneSpec.platform("bench", slots).withQueue(queue));
             for (int s = 0; s < slots; s++) {
                 lane.submit(() -> {
                     gate.await();
@@ -111,27 +117,30 @@ class LaneBenchmark {
     void contention() throws InterruptedException {
         int[] producers = {1, 4, 8, 16};
         int[] slots = {1, 4, 16};
-        double[][][][] samples = new double[producers.length][slots.length][2][ROUNDS];
-        for (int round = -WARMUP; round < ROUNDS; round++) {
-            for (int p = 0; p < producers.length; p++) {
-                for (int s = 0; s < slots.length; s++) {
-                    contend(round, producers[p], slots[s], samples[p][s]);
+        for (LaneQueue queue : LaneQueue.values()) {
+            double[][][][] samples = new double[producers.length][slots.length][2][ROUNDS];
+            for (int round = -WARMUP; round < ROUNDS; round++) {
+                for (int p = 0; p < producers.length; p++) {
+                    for (int s = 0; s < slots.length; s++) {
+                        contend(queue, round, producers[p], slots[s], samples[p][s]);
+                    }
                 }
             }
-        }
-        for (int p = 0; p < producers.length; p++) {
-            for (int s = 0; s < slots.length; s++) {
-                print(String.format(Locale.ROOT, "%2d producers, platform lane of %2d", producers[p], slots[s]),
-                    samples[p][s]);
+            for (int p = 0; p < producers.length; p++) {
+                for (int s = 0; s < slots.length; s++) {
+                    print(String.format(Locale.ROOT, "%s, %2d producers, platform lane of %2d", queue, producers[p],
+                        slots[s]), samples[p][s]);
+                }
             }
         }
     }
 
-    private void contend(int round, int producers, int slots, double[][] samples) throws InterruptedException {
+    private void contend(LaneQueue queue, int round, int producers, int slots, double[][] samples)
+        throws InterruptedException {
         int perProducer = 4 * TASKS / producers;
         int total = perProducer * producers;
         try (TaskScheduler tasks = new TaskScheduler()) {
-            Lane lane = tasks.platformLane("bench", slots);
+            Lane lane = tasks.lane(LaneSpec.platform("bench", slots).withQueue(queue));
             AtomicInteger done = new AtomicInteger();
             CountDownLatch start = new CountDownLatch(1);
             long[] submitNanos = new long[producers];

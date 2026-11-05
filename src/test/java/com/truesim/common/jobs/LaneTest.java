@@ -13,6 +13,8 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicIntegerArray;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 
 /**
  * The lock-free lane under contention: many threads submitting, finishing and cancelling at once must keep the
@@ -73,11 +75,12 @@ class LaneTest {
     private record Submitted(int producer, int priority, long sequence) {
     }
 
-    @Test
-    void manyProducersQueueInPriorityThenSubmissionOrder() throws InterruptedException {
+    @ParameterizedTest
+    @EnumSource(LaneQueue.class)
+    void manyProducersQueueInPriorityThenSubmissionOrder(LaneQueue queue) throws InterruptedException {
         for (int round = 0; round < 20; round++) {
             try (TaskScheduler tasks = new TaskScheduler()) {
-                Lane lane = tasks.platformLane("serial", 1);
+                Lane lane = tasks.lane(LaneSpec.platform("serial", 1).withQueue(queue));
                 CountDownLatch gate = new CountDownLatch(1);
                 Task<?> blocker = lane.execute(() -> {
                     try {
@@ -110,7 +113,8 @@ class LaneTest {
                 blocker.join();
                 // Everything was queued behind the blocker, so it ran strictly by priority, then submission.
                 List<Submitted> expected = new ArrayList<>(submitted);
-                expected.sort(Comparator.comparingInt((Submitted s) -> -s.priority()).thenComparingLong(Submitted::sequence));
+                expected.sort(Comparator.comparingInt((Submitted s) -> -s.priority())
+                    .thenComparingLong(Submitted::sequence));
                 assertThat(List.copyOf(ran)).containsExactlyElementsOf(expected);
                 assertThat(lane.queued()).isZero();
                 awaitIdle(tasks, lane);
@@ -118,11 +122,12 @@ class LaneTest {
         }
     }
 
-    @Test
-    void manyProducersWhileTasksFinishKeepTheLimitAndRunEveryTaskOnce() throws InterruptedException {
+    @ParameterizedTest
+    @EnumSource(LaneQueue.class)
+    void manyProducersWhileTasksFinishKeepTheLimitAndRunEveryTaskOnce(LaneQueue queue) throws InterruptedException {
         for (int slots : new int[] {1, 3, 8}) {
             try (TaskScheduler tasks = new TaskScheduler()) {
-                Lane lane = tasks.platformLane("busy", slots);
+                Lane lane = tasks.lane(LaneSpec.platform("busy", slots).withQueue(queue));
                 int producers = 8;
                 int each = 2000;
                 AtomicIntegerArray runs = new AtomicIntegerArray(producers * each);
@@ -152,12 +157,13 @@ class LaneTest {
         }
     }
 
-    @Test
-    void serialKeysKeepEachProducersOrderUnderContention() throws InterruptedException {
+    @ParameterizedTest
+    @EnumSource(LaneQueue.class)
+    void serialKeysKeepEachProducersOrderUnderContention(LaneQueue queue) throws InterruptedException {
         record Key(int producer) {
         }
         try (TaskScheduler tasks = new TaskScheduler()) {
-            Lane lane = tasks.platformLane("keys", 4);
+            Lane lane = tasks.lane(LaneSpec.platform("keys", 4).withQueue(queue));
             int producers = 8;
             int each = 500;
             int[][] order = new int[producers][each];
@@ -179,11 +185,12 @@ class LaneTest {
         }
     }
 
-    @Test
-    void cancellingWhileProducersSubmitAndTasksFinish() throws InterruptedException {
+    @ParameterizedTest
+    @EnumSource(LaneQueue.class)
+    void cancellingWhileProducersSubmitAndTasksFinish(LaneQueue queue) throws InterruptedException {
         for (int round = 0; round < 10; round++) {
             try (TaskScheduler tasks = new TaskScheduler()) {
-                Lane lane = tasks.platformLane("cancel", 2);
+                Lane lane = tasks.lane(LaneSpec.platform("cancel", 2).withQueue(queue));
                 int producers = 4;
                 int each = 1000;
                 Task<?>[] all = new Task<?>[producers * each];

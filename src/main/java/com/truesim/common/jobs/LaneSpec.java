@@ -1,6 +1,7 @@
 package com.truesim.common.jobs;
 
 import com.truesim.annotations.AllowAllocation;
+import java.util.Objects;
 
 /**
  * The definition of a lane, without threads: safe to keep in a {@code static final} field and use from anywhere.
@@ -27,29 +28,39 @@ public final class LaneSpec {
     private final String name;
     private final boolean virtual;
     private final int maxConcurrent;
+    private final LaneQueue queue;
 
-    private LaneSpec(String name, boolean virtual, int maxConcurrent) {
+    private LaneSpec(String name, boolean virtual, int maxConcurrent, LaneQueue queue) {
         if (maxConcurrent < 1) {
             throw new IllegalArgumentException("A lane needs at least one slot: " + maxConcurrent);
         }
         this.name = name;
         this.virtual = virtual;
         this.maxConcurrent = maxConcurrent;
+        this.queue = Objects.requireNonNull(queue, "queue");
     }
 
     /** A lane on virtual threads, for I/O: at most {@code maxConcurrent} of its tasks run at once. */
     public static LaneSpec virtual(String name, int maxConcurrent) {
-        return new LaneSpec(name, true, maxConcurrent);
+        return new LaneSpec(name, true, maxConcurrent, LaneQueue.LOCK_FREE);
     }
 
     /** A lane on {@code threads} platform threads, for CPU-bound background work. */
     public static LaneSpec platform(String name, int threads) {
-        return new LaneSpec(name, false, threads);
+        return new LaneSpec(name, false, threads, LaneQueue.LOCK_FREE);
     }
 
     /** A lane that runs one task at a time, in order of priority, then submission, on a virtual thread. */
     public static LaneSpec serial(String name) {
         return virtual(name, 1);
+    }
+
+    /**
+     * The same lane definition with another ready queue; a new spec, so a new lane. Lanes default to
+     * {@link LaneQueue#LOCK_FREE}.
+     */
+    public LaneSpec withQueue(LaneQueue queue) {
+        return new LaneSpec(name, virtual, maxConcurrent, queue);
     }
 
     public String name() {
@@ -66,8 +77,14 @@ public final class LaneSpec {
         return maxConcurrent;
     }
 
+    /** How the lane's ready queue handles threads that submit and finish tasks at the same time. */
+    public LaneQueue queue() {
+        return queue;
+    }
+
     @Override
     public String toString() {
-        return "LaneSpec " + name + " (" + (virtual ? "virtual" : "platform") + ", " + maxConcurrent + ")";
+        return "LaneSpec " + name + " (" + (virtual ? "virtual" : "platform") + ", " + maxConcurrent
+            + (queue == LaneQueue.LOCKED ? ", locked" : "") + ")";
     }
 }

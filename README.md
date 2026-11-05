@@ -89,6 +89,11 @@ try (TaskScheduler tasks = new TaskScheduler()) {
 
 - **Lanes** run at most `maxConcurrent` tasks at once; ready tasks start by priority, then
   submission order.
+- **Submitting is lock-free:** a submission never waits for threads that finish tasks (about
+  0.1–0.3 µs while tasks run, against 1–6 µs with a lock). `spec.withQueue(LaneQueue.LOCKED)` takes
+  one lock instead, which gets 10–25% more tiny tasks through a platform lane of several threads
+  while several threads submit at once. `LaneBenchmark` measures both
+  (`TRUESIM_BENCHMARK=true ./gradlew test --tests '*LaneBenchmark'`).
 - **Lane specs** are the definitions: keep them in `static final` fields and use them anywhere.
   Each scheduler builds its own lane from a spec on first use, so threads and tasks stay with the
   scheduler that owns them (tests, editor and game each get their own). Specs are compared by

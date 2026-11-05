@@ -16,11 +16,12 @@ import java.util.concurrent.atomic.LongAdder;
  * ready ones in order of priority, then submission. Created by a {@link TaskScheduler}: virtual threads for I/O,
  * platform threads for CPU-bound background work, or a serial lane that runs one task at a time in order.
  *
- * <p>Lock-free: a task that becomes ready joins an inbox with one atomic swap, so submitting never waits for threads
- * that finish tasks. Whichever thread then finds a free slot becomes the lane's only dispatcher for a moment: it moves
- * the inbox into the priority queue and hands out the best tasks while slots are free. Other threads that want to
- * dispatch meanwhile only leave a note, and the dispatcher goes round once more before it stops, so no ready task is
- * left behind with a free slot. The order holds among the tasks that are ready when a slot is filled.
+ * <p>Lock-free by default ({@link LaneQueue#LOCK_FREE}): a task that becomes ready joins an inbox with one atomic swap,
+ * so submitting never waits for threads that finish tasks. Whichever thread then finds a free slot becomes the lane's
+ * only dispatcher for a moment: it moves the inbox into the priority queue and hands out the best tasks while slots are
+ * free. Other threads that want to dispatch meanwhile only leave a note, and the dispatcher goes round once more before
+ * it stops, so no ready task is left behind with a free slot. The order holds among the tasks that are ready when a
+ * slot is filled. {@link LaneQueue#LOCKED} takes one lock instead.
  */
 @AllowAllocation("tasks are for I/O and background work, not for hot loops")
 public final class Lane {
@@ -36,6 +37,8 @@ public final class Lane {
     private final String name;
     private final int maxConcurrent;
     private final ExecutorService executor;
+    /** {@link LaneQueue#LOCKED}: submitting, finishing and cancelling take the lane's lock instead. */
+    private final boolean locked;
     private final ConcurrentHashMap<Object, Task<?>> lastByKey = new ConcurrentHashMap<>();
     /**
      * Tasks that became ready since the last dispatch, oldest first: a queue of many producers and one consumer (the
@@ -49,10 +52,10 @@ public final class Lane {
     private final LongAdder queued = new LongAdder();
     /** Set when a queued task was cancelled, so the dispatcher drops cancelled tasks from {@link #ready}. */
     private final AtomicBoolean purge = new AtomicBoolean();
-    /** Ready tasks by priority, then submission; only touched by the dispatching thread. */
+    /** Ready tasks by priority, then submission; only touched by the dispatching thread (or under the lock). */
     private final PriorityQueue<Task<?>> ready = new PriorityQueue<>(ORDER);
 
-    Lane(TaskScheduler scheduler, String name, int maxConcurrent, ExecutorService executor) {
+    Lane(TaskScheduler scheduler, String name, int maxConcurrent, ExecutorService executor, LaneQueue queue) {
         if (maxConcurrent < 1) {
             throw new IllegalArgumentException("A lane needs at least one slot: " + maxConcurrent);
         }
@@ -60,10 +63,16 @@ public final class Lane {
         this.name = name;
         this.maxConcurrent = maxConcurrent;
         this.executor = executor;
+        this.locked = queue == LaneQueue.LOCKED;
     }
 
     public String name() {
         return name;
+    }
+
+    /** How the lane's ready queue handles threads that submit and finish tasks at the same time. */
+    public LaneQueue queue() {
+        return locked ? LaneQueue.LOCKED : LaneQueue.LOCK_FREE;
     }
 
     /** How many of this lane's tasks may run at once. */
@@ -110,6 +119,10 @@ public final class Lane {
 
     /** A task became ready: onto the inbox, and handed out at once if a slot is free. */
     void enqueue(Task<?> task) {
+        if (locked) {
+            enqueueLocked(task);
+            return;
+        }
         queued.increment();
         Node node = new Node(task);
         // Wait-free: claim the tail, then link the old tail to the node. Until it is linked, the dispatcher sees the
@@ -123,6 +136,9 @@ public final class Lane {
 
     /** Takes a task out of the ready queue; {@code false} if it was already handed to a thread. */
     boolean remove(Task<?> task) {
+        if (locked) {
+            return removeLocked(task);
+        }
         if (!task.claim()) {
             return false;
         }
@@ -138,6 +154,10 @@ public final class Lane {
      * has to be woken (measured: a backlog drains about 1.7 times faster with the wait, see LaneBenchmark).
      */
     void finished() {
+        if (locked) {
+            finishedLocked();
+            return;
+        }
         running.decrementAndGet();
         dispatch();
         for (int spins = 0; spins < FINISH_SPINS && dispatches.get() != 0; spins++) {
@@ -175,6 +195,36 @@ public final class Lane {
             }
             missed = dispatches.addAndGet(-missed);
         } while (missed != 0);
+    }
+
+    // ---------------------------------------------------------------- LaneQueue.LOCKED: one lock, no inbox
+
+    private synchronized void enqueueLocked(Task<?> task) {
+        queued.increment();
+        ready.add(task);
+        dispatchLocked();
+    }
+
+    private synchronized boolean removeLocked(Task<?> task) {
+        if (!ready.remove(task)) {
+            return false;
+        }
+        queued.decrement();
+        return true;
+    }
+
+    private synchronized void finishedLocked() {
+        running.decrementAndGet();
+        dispatchLocked();
+    }
+
+    private void dispatchLocked() {
+        while (running.get() < maxConcurrent && !ready.isEmpty()) {
+            Task<?> task = ready.poll();
+            queued.decrement();
+            running.incrementAndGet();
+            executor.execute(task::run);
+        }
     }
 
     /** An inbox entry. */
