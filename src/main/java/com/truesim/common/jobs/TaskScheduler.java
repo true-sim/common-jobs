@@ -73,8 +73,8 @@ public final class TaskScheduler implements AutoCloseable {
     public synchronized Lane lane(LaneSpec spec) {
         Lane lane = bySpec.get(spec);
         if (lane == null) {
-            lane = spec.isVirtual() ? virtualLane(spec.name(), spec.maxConcurrent())
-                : platformLane(spec.name(), spec.maxConcurrent());
+            lane = lane(spec.name(), spec.maxConcurrent(), spec.isVirtual() ? virtualExecutor(spec.name())
+                : platformExecutor(spec.name(), spec.maxConcurrent()), spec.queue());
             bySpec.put(spec, lane);
         }
         return lane;
@@ -82,13 +82,20 @@ public final class TaskScheduler implements AutoCloseable {
 
     /** A lane on virtual threads, for I/O: at most {@code maxConcurrent} of its tasks run at once. */
     public Lane virtualLane(String name, int maxConcurrent) {
-        return lane(name, maxConcurrent, Executors.newThreadPerTaskExecutor(Thread.ofVirtual().name(name + "-", 0).factory()));
+        return lane(name, maxConcurrent, virtualExecutor(name));
     }
 
     /** A lane on {@code threads} platform threads, for CPU-bound background work. */
     public Lane platformLane(String name, int threads) {
-        return lane(name, threads,
-            Executors.newFixedThreadPool(threads, Thread.ofPlatform().daemon().name(name + "-", 0).factory()));
+        return lane(name, threads, platformExecutor(name, threads));
+    }
+
+    private static ExecutorService virtualExecutor(String name) {
+        return Executors.newThreadPerTaskExecutor(Thread.ofVirtual().name(name + "-", 0).factory());
+    }
+
+    private static ExecutorService platformExecutor(String name, int threads) {
+        return Executors.newFixedThreadPool(threads, Thread.ofPlatform().daemon().name(name + "-", 0).factory());
     }
 
     /** A lane that runs one task at a time, in order of priority, then submission, on a virtual thread. */
@@ -97,9 +104,13 @@ public final class TaskScheduler implements AutoCloseable {
     }
 
     /** A lane on any executor, e.g. one that runs tasks when a test says so. */
-    synchronized Lane lane(String name, int maxConcurrent, ExecutorService executor) {
+    Lane lane(String name, int maxConcurrent, ExecutorService executor) {
+        return lane(name, maxConcurrent, executor, LaneQueue.LOCK_FREE);
+    }
+
+    synchronized Lane lane(String name, int maxConcurrent, ExecutorService executor, LaneQueue queue) {
         checkOpen();
-        Lane lane = new Lane(this, name, maxConcurrent, executor);
+        Lane lane = new Lane(this, name, maxConcurrent, executor, queue);
         lanes.add(lane);
         return lane;
     }

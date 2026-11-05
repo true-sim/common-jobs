@@ -19,11 +19,13 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 
 class TaskSchedulerTest {
 
     /** Holds the tasks a lane hands over until the test runs them: fully deterministic scheduling. */
-    static final class ManualExecutor extends AbstractExecutorService {
+    static class ManualExecutor extends AbstractExecutorService {
 
         final Queue<Runnable> handed = new ArrayDeque<>();
         boolean shutdown;
@@ -83,9 +85,10 @@ class TaskSchedulerTest {
 
     // ---------------------------------------------------------------- lanes
 
-    @Test
-    void lanesLimitConcurrencyAndOrderByPriority() {
-        Lane lane = tasks.lane("manual", 2, executor);
+    @ParameterizedTest
+    @EnumSource(LaneQueue.class)
+    void lanesLimitConcurrencyAndOrderByPriority(LaneQueue queue) {
+        Lane lane = tasks.lane("manual", 2, executor, queue);
         assertThat(lane.name()).isEqualTo("manual");
         assertThat(lane.maxConcurrent()).isEqualTo(2);
         assertThat(lane.toString()).isEqualTo("Lane manual");
@@ -236,9 +239,10 @@ class TaskSchedulerTest {
 
     // ---------------------------------------------------------------- cancelling
 
-    @Test
-    void cancelling() throws InterruptedException {
-        Lane lane = tasks.lane("manual", 1, executor);
+    @ParameterizedTest
+    @EnumSource(LaneQueue.class)
+    void cancelling(LaneQueue queue) throws InterruptedException {
+        Lane lane = tasks.lane("manual", 1, executor, queue);
         Task<Integer> gate = lane.submit(() -> 1);
         Task<Integer> queued = lane.submit(() -> 2);
         Task<Integer> waiting = lane.submit(() -> 3, queued);

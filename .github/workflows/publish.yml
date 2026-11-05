@@ -18,7 +18,8 @@ jobs:
           distribution: temurin
           java-version: 27
       - uses: gradle/actions/setup-gradle@v6
-      - run: ./gradlew build publish -Pversion=${GITHUB_REF_NAME#v}
+      # one module at a time, long HTTP timeouts: parallel or retried uploads of a new version got 409 Conflict on GitHub Packages
+      - run: ./gradlew build publish --no-parallel -Dorg.gradle.internal.http.socketTimeout=600000 -Dorg.gradle.internal.http.connectionTimeout=600000 -Pversion=${GITHUB_REF_NAME#v}
         env:
           GITHUB_ACTOR: ${{ github.actor }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
