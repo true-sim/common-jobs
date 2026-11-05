@@ -6,6 +6,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CancellationException;
+import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
 import java.util.function.Consumer;
 
 /**
@@ -17,6 +18,10 @@ import java.util.function.Consumer;
  */
 @AllowAllocation("tasks are for I/O and background work, not for hot loops")
 public final class Task<T> {
+
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    private static final AtomicIntegerFieldUpdater<Task<?>> CLAIMED =
+        (AtomicIntegerFieldUpdater) AtomicIntegerFieldUpdater.newUpdater(Task.class, "claimed");
 
     final Lane lane;
     final long sequence;
@@ -35,6 +40,8 @@ public final class Task<T> {
     private final List<Task<?>> followers = new ArrayList<>();
     private Thread runner;
     private boolean cancelRequested;
+    /** Set once by whichever comes first: the lane handing the queued task to a thread, or a cancel taking it out. */
+    private volatile int claimed;
 
     Task(Lane lane, long sequence, int priority, Callable<T> work, Duration timeout, Consumer<? super Task<T>> handler,
         Object serialKey) {
@@ -165,6 +172,15 @@ public final class Task<T> {
                 new TaskFailedException(prerequisite + " did not succeed", prerequisite.failure()));
         }
         announce(ended);
+    }
+
+    /** Claims the queued task for its lane or for a cancel; {@code false} if the other one was first. */
+    boolean claim() {
+        return CLAIMED.compareAndSet(this, 0, 1);
+    }
+
+    boolean claimed() {
+        return claimed != 0;
     }
 
     /** Runs the work on the lane thread it was handed to. */

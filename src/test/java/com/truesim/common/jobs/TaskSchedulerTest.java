@@ -23,7 +23,7 @@ import org.junit.jupiter.api.Test;
 class TaskSchedulerTest {
 
     /** Holds the tasks a lane hands over until the test runs them: fully deterministic scheduling. */
-    static final class ManualExecutor extends AbstractExecutorService {
+    static class ManualExecutor extends AbstractExecutorService {
 
         final Queue<Runnable> handed = new ArrayDeque<>();
         boolean shutdown;

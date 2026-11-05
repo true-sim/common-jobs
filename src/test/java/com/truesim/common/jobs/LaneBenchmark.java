@@ -62,10 +62,54 @@ class LaneBenchmark {
         }
     }
 
+    /** How fast a platform lane works off a backlog: tiny tasks (four priorities) queued behind busy slots. */
+    @Test
+    void backlog() throws InterruptedException {
+        int[] slots = {1, 4, 16};
+        double[][][] samples = new double[slots.length][2][ROUNDS];
+        for (int round = -WARMUP; round < ROUNDS; round++) {
+            for (int s = 0; s < slots.length; s++) {
+                drain(round, slots[s], samples[s]);
+            }
+        }
+        for (int s = 0; s < slots.length; s++) {
+            print(String.format(Locale.ROOT, "backlog of %d, platform lane of %2d", 4 * TASKS, slots[s]), samples[s]);
+        }
+    }
+
+    private void drain(int round, int slots, double[][] samples) throws InterruptedException {
+        int total = 4 * TASKS;
+        CountDownLatch gate = new CountDownLatch(1);
+        try (TaskScheduler tasks = new TaskScheduler()) {
+            Lane lane = tasks.platformLane("bench", slots);
+            for (int s = 0; s < slots; s++) {
+                lane.submit(() -> {
+                    gate.await();
+                    return null;
+                });
+            }
+            AtomicInteger done = new AtomicInteger();
+            long t0 = System.nanoTime();
+            for (int i = 0; i < total; i++) {
+                lane.task(done::incrementAndGet).priority(i & 3).submit();
+            }
+            long t1 = System.nanoTime();
+            gate.countDown();
+            while (done.get() < total) {
+                Thread.onSpinWait();
+            }
+            long t2 = System.nanoTime();
+            if (round >= 0) {
+                samples[0][round] = (t1 - t0) / 1e3 / total;
+                samples[1][round] = total / ((t2 - t1) / 1e6);
+            }
+        }
+    }
+
     /** Several threads submit tiny tasks (four priorities) to one platform lane at once: cost and throughput. */
     @Test
     void contention() throws InterruptedException {
-        int[] producers = {1, 4, 16};
+        int[] producers = {1, 4, 8, 16};
         int[] slots = {1, 4, 16};
         double[][][][] samples = new double[producers.length][slots.length][2][ROUNDS];
         for (int round = -WARMUP; round < ROUNDS; round++) {
