@@ -120,3 +120,7 @@ try (TaskScheduler tasks = new TaskScheduler()) {
 Uses `../build-logic` automatically when checked out next to this repository (override with
 `-Ptruesim.build-logic=<path>`), or fetches it from GitHub Packages.
 The build enforces platform independence, allocation-free code and 100% line and branch coverage.
+
+## Licence
+
+MIT, see [LICENSE](LICENSE).
